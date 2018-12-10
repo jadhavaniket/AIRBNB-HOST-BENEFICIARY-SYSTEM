@@ -1,0 +1,195 @@
+###Code forData Cleaning: Milestone 1
+
+##Airbnb Data
+
+#Downloaded the New York City data from insideairbnb.com (http://insideairbnb.com/get-the-data.html). We focused on the listings.csv content
+
+#1.	Getting the CSV file into R
+listings<-read.csv("project/listings.csv",stringsAsFactors = FALSE)
+
+#2.	Installing ggplot
+install.packages("ggplot2", dependencies = TRUE)
+
+#3.	Converted all blanks to ‘NA’
+listings[listings==""] <- NA 
+
+#4.	Removed all ‘NA’ from the review_scores_rating column
+listings<-listings[complete.cases(listings$review_scores_rating),]
+
+#5.	Created a copy of the ‘listings’ dataframe for subsequent analysis
+temp <-listings
+
+#6.	Since some fields in the dataframe had the string ‘N/A’, they were converted into a missing value/not available entry.
+temp[temp=="N/A"] <- NA
+
+#7.	Then, we removed all empty columns in the dataframe  
+temp<-temp[, colSums(is.na(temp)) != nrow(temp)]
+
+#8.	Since we deleted/modified content, we regularly checked the number of records we had with us
+nrow(temp)
+
+#9.	Since there were some irregular entries in the zipcode column, we retained only the rows where zipcode length<=5
+temp<-subset(temp, nchar(as.character(zipcode)) <= 5)
+
+#10.	Removed outliers (if number of listings<10)
+temp<-temp[as.numeric(ave(temp$zipcode, temp$zipcode, FUN=length)) >= 10, ] 
+
+#11.	Converted the currency column of price to integer value
+temp$price <- as.numeric(gsub('[$,]', '', temp$price))
+
+
+#Service Requests - 311 calls 
+#Code to merge frequency of 311 service calls in zipcodes where the listings exist
+
+setwd("/INST737/Project/");
+servicecallsData <- read.csv("/INST737/Project/311calls.csv", stringsAsFactors = FALSE);
+
+#text mining package to identify zipcode frequency
+install.packages("tm")
+library(tm) 
+
+# create a corpus of zip codes as string
+corpus <-Corpus(VectorSource(servicecallsData$Incident_zip))
+
+# remove extra white spaces
+corpus<- tm_map(corpus, stripWhitespace);
+
+# create frequency of zipcodes
+docTermMat <- DocumentTermMatrix(corpus)
+zipFreq <- colSums(as.matrix(docTermMat))
+freqTab <- data.frame(zipcode = names(zipFreq), zipcode_freq = zipFreq)
+
+#Verify zip code frequencies dataframe
+View(freqTab)
+
+#initialize a new variable
+listing$zipcode_freq <- c()
+
+#Add the zip code frequencies to the new vector variable and Merge with Airbnb listing data
+for(id in 1:nrow(freqTab)){
+  listing$zipcode_freq[listing$zipcode %in% freqTab$zipcode[id]] <- freqTab$zipcode_freq[id]
+}
+
+#Verify the mered data
+View(listing)
+
+#Converting Blanks for zipcode frequency variable into NAs
+listing$zipcode_freq[listing$zipcode_freq==""] <- NA
+listing <- listing[complete.cases(listing$zipcode_freq),]
+
+#create a new csv file with merged data
+write.csv(listing, file = "listing_311freq.csv")
+
+
+##Exploratory Analysis
+
+#Airbnb Data
+#1.	Plot to calculate the density of reviews
+ggplot(temp, aes(review_scores_rating)) +
+  +     geom_density()
+
+#2.	Plot to calculate the density of reviews by neighbourhood; since we found the rating density more beyond 75, x axis limit has been set to 75-100
+ggplot(temp, aes(review_scores_rating,colour = neighbourhood_group_cleansed)) +
+  +     geom_density(alpha = 0.1) +
+  +     xlim(75, 100)
+
+#3.	Descriptive statistics per neighbourhood, based on rating
+ddply(temp, .(neighbourhood_group_cleansed), summarize,  mean=mean(review_scores_rating),median=median(review_scores_rating))
+
+neighbourhood_group_cleansed     mean median
+1                        Bronx 92.06753     94
+2                     Brooklyn 92.91362     95
+3                    Manhattan 92.29752     94
+4                       Queens 92.08119     95
+5                Staten Island 93.55396     95
+
+#4.	Bar plot to calculate number of listings per neighbourhood
+ggplot(temp, aes(neighbourhood_group_cleansed)) +
+  +     geom_bar(aes(fill=room_type))
+
+#5.	To better understand the effect of price, we created a new column ‘price_per_person’, where price_per_person = price/no. of people that the listing can accommodate
+temp$price_per_person <- as.numeric(temp$price)/temp$accommodates
+
+#6.	Scatter plot to identify the effect of price
+ggplot(data=temp,aes(x=price_per_person,y=review_scores_rating))+geom_point(size=3)+xlim(0,4000)+ylim(75,100)
+
+#7.	Correlation coefficient between price per person and rating
+cor(temp$price_per_person,temp$review_scores_rating)
+
+#8.	Descriptive statistics per neighbourhood, based on price
+ddply(temp, .(neighbourhood_group_cleansed), summarize,  mean=mean(price),median=median(price))
+neighbourhood_group_cleansed      mean median
+1                        Bronx  73.20779     60
+2                     Brooklyn 119.32683     95
+3                    Manhattan 175.33605    140
+4                       Queens  91.65379     75
+5                Staten Island  91.38129     75
+
+#9.	Plot to find the average listing price per neighbourhood
+ggplot(temp, aes(x=factor(neighbourhood_group_cleansed), y=price)) + stat_summary(fun.y="mean", geom="bar")
+
+
+#10.	Exploring the location details by number of reviews. This will help us predict if the number of reviews will amount to an increase in the number of listings in a neighbourhood.
+locadata<-data.frame(mydata$reviews_per_month,mydata$zipcode,mydata$cancellation_policy,mydata$neighbourhood_group_cleansed) 
+
+colnames(locadata) = c('reviews_per_month','zipcode','cancellation_policy','neighbourhood_cleansed') 
+
+ddply(locadata, .(neighbourhood_cleansed), summarize,  mean=mean(reviews_per_month))
+
+
+#11.	The below code gives the visualization of mean reviews on a map
+reviewsformap<- data.frame(mydata$reviews_per_month,mydata$latitude,mydata$longitude)
+colnames(reviewsformap)=c('reviews_per_month', 'lat','lon')
+
+library(ggmap)
+google <- get_googlemap('new york', zoom = 14)
+ggmap(google,extent = "device")
+qmplot(lon, lat,reviewsformap[,1], data = reviewsformap, maptype = "toner-lite", col= ifelse(reviewsformap[,1] < 2,'Reviews<1','Reviews>1'))
+
+
+
+#Future Scope: Work in Progress
+
+#Foursquare API
+listing <- read.csv("/INST737/Project/listings.csv", sep=",",head=TRUE);
+library("RCurl", "RJSONIO")
+
+#Authorization token from Foursquare developer account
+authToken <- "JHNVRS20EJPCUTVBZSKGSQS1QZLWR35X2CEYPSKKXPW1JKWQ"
+date = "20170101"
+
+#Read listings data file with latitudes and longitudes
+for (i in 1:dim(listing)[1]) {
+  lat = listing$latitude[i]
+  long = listing$longitude[i]
+  
+  #use Foursquare API url and get JSON resonse as query results
+  w<-paste("https://api.foursquare.com/v2/venues/trending?ll=",lat,long,"&radius=2000&oauth_token=",authToken,"&v=",date,sep="")
+  u<-getURL(w)
+  test<-fromJSON(u)
+  
+  #initialize variables
+  locationname=""
+  lat=""
+  long=""
+  zip=""
+  herenowcount=""
+  likes=""
+  
+  #Segregate query response into the initialized variables
+  for(n in 1:length(test$response$venues)) {
+    locationname[n] = test$response$venues[[n]]$name
+    lat[n] = test$response$venues[[n]]$location$lat
+    long[n] = test$response$venues[[n]]$location$lng
+    zip[n] = test$response$venues[[n]]$location$postalCode
+    herenowcount[n]<-test$response$venues[[n]]$hereNow$count
+    likes[n]<-test$response$venues[[n]]$likes$count
+  }
+  
+}
+
+#create a new data frame to bind the query results
+checkins<-as.data.frame(cbind(locationname, lat, long, zip, herenowcount, likes))
+
+#create a new csv file with merged data
+write.csv(checkins, file = "checkins.csv")
